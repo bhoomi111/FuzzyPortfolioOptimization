@@ -1,69 +1,96 @@
 # Fuzzy Portfolio Optimization
 
-A Python implementation of a fuzzy portfolio optimization workflow using coherent triangular fuzzy numbers and a multi-objective genetic algorithm (MOGA) foundation.
+Python implementation of a fuzzy portfolio optimization workflow using coherent triangular fuzzy numbers and a multi-objective genetic algorithm (MOGA).
 
-## What This Repo Does
+## Features
 
-- Loads monthly returns or prices from CSV files
-- Computes portfolio return series from asset returns and weights
-- Fits a coherent triangular fuzzy number to historical portfolio returns
-- Computes fuzzy moments used for portfolio modeling:
-  - Credibilistic mean
+- Loads monthly returns data from CSV
+- Builds coherent triangular fuzzy numbers from portfolio returns
+- Evaluates multiple fuzzy-moment objectives:
+  - Mean
   - Semivariance
+  - MASD
+  - CVaR-style downside proxy
   - Skewness
   - Semikurtosis
-- Provides optimization building blocks (constraints, operators, Pareto sorting, crowding distance, MOGA)
+- Runs three model variants and generates comparison tables
+- Saves portfolio tables and plot images into the results folder
 
-## Project Layout
+## Project Structure
 
-- `data/raw/`: input datasets (returns, prices, metadata)
-- `data/processed/`: processed outputs
-- `scripts/run_experiment.py`: baseline experiment entrypoint
-- `src/data/`: data loading and preprocessing
-- `src/fuzzy/`: coherent triangular fuzzy fitting
-- `src/moments/`: risk/shape moment functions
-- `src/models/`: objective composition
-- `src/optimization/`: MOGA and related operators
-- `src/clustering/`: k-medoids helper
+- data/raw: input data files
+- data/processed: processed outputs
+- results: generated CSV tables and PNG plots
+- scripts/run_experiment.py: quick baseline experiment
+- scripts/run_tables.py: full table + portfolio generation for all models
+- scripts/run_comparison.py: comparison run across model variants
+- src/data: loaders and preprocessing
+- src/fuzzy: coherent triangular fuzzy fitting
+- src/moments: fuzzy moment functions
+- src/models: objective definitions
+- src/optimization: MOGA operators and Pareto utilities
+- src/clustering: k-medoids representative selection
+- src/visualization/plot.py: plot generation from saved results
 
 ## Requirements
 
-- Python 3.11 (recommended for this workspace)
-- pip
 
 Install dependencies:
 
 ```bash
-py -3.11 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-## Quick Start
+## Run Guide
 
-From repository root:
+Run from repository root.
+
+1) Quick sanity run
 
 ```bash
-py -3.11 scripts/run_experiment.py
+python scripts/run_experiment.py
 ```
 
-Expected output format:
+2) Generate model result tables and portfolios
 
-```text
-Mean: <value>
-Fuzzy params: <b1> <b2> <b3> <k>
+```bash
+python scripts/run_tables.py
 ```
 
-## Data Expectations
+This writes files like:
 
-The baseline script reads:
+- results/model1_table.csv
+- results/model2_table.csv
+- results/model3_table.csv
+- results/model1_portfolios.csv
+- results/model2_portfolios.csv
+- results/model3_portfolios.csv
 
-- `data/raw/monthly_returns.csv`
+3) Generate plots from saved tables
 
-Expected shape:
+```bash
+python src/visualization/plot.py
+```
 
-- A `Date` column
-- One column per asset with numeric returns
+This writes files like:
 
-## Notes
+- results/model1_pareto_front.png
+- results/model1_risk_vs_skewness.png
+- results/model1_efficient_frontier.png
+- results/model2_pareto_front.png
+- results/model2_risk_vs_skewness.png
+- results/model2_efficient_frontier.png
+- results/model3_pareto_front.png
+- results/model3_risk_vs_skewness.png
+- results/model3_efficient_frontier.png
 
-- The repository currently includes core optimization primitives and a baseline experiment.
-- `src/moments/cvar.py` and `src/moments/masd.py` are present as placeholders and can be implemented as future extensions.
+## Data Format
+
+Main input file:
+
+- data/raw/monthly_returns.csv
+
+Expected columns:
+
+- Date
+- one numeric return column per asset
