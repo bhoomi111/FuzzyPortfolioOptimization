@@ -1,6 +1,6 @@
 import numpy as np
 from src.optimization.operators import crossover, mutation
-from src.optimization.constraints import repair
+from src.optimization.constraints import random_feasible_portfolio, repair
 from src.optimization.pareto import non_dominated_sort
 from src.optimization.crowding import crowding_distance
 
@@ -16,8 +16,10 @@ class MOGA:
         self.mp = mp   # mutation probability
 
     def initialize(self):
-        pop = np.random.dirichlet(np.ones(self.n_assets), size=self.pop_size)
-        return [repair(p, self.lower, self.upper, self.k) for p in pop]
+        return [
+            random_feasible_portfolio(self.n_assets, self.lower, self.upper, self.k)
+            for _ in range(self.pop_size)
+        ]
 
     def evaluate(self, population, objective_fn):
         return [objective_fn(ind) for ind in population]
@@ -30,14 +32,14 @@ class MOGA:
             idx = np.random.randint(len(population), size=2)
             p1, p2 = population[idx[0]], population[idx[1]]
 
-            # 🔥 APPLY CROSSOVER PROBABILITY (cp)
+            # Apply crossover probability
             if np.random.rand() < self.cp:
-                child = crossover(p1, p2)
+                child = crossover(p1, p2, self.lower, self.upper)
             else:
                 child = p1.copy()
 
-            # 🔥 APPLY MUTATION PROBABILITY (mp)
-            child = mutation(child, rate=self.mp)
+            # Apply mutation probability
+            child = mutation(child, rate=self.mp, lower=self.lower, upper=self.upper, k=self.k)
 
             # Repair constraints
             child = repair(child, self.lower, self.upper, self.k)
@@ -46,10 +48,10 @@ class MOGA:
 
         return new_pop
 
-    def run(self, objective_fn, generations=50):
+    def run(self, objective_fn, generations=50, progress_callback=None):
         pop = self.initialize()
 
-        for _ in range(generations):
+        for generation_idx in range(generations):
             offspring = self.evolve(pop)
 
             combined = pop + offspring
@@ -57,6 +59,9 @@ class MOGA:
             fitnesses = [objective_fn(ind) for ind in combined]
 
             pop = self.select_next_generation(combined, fitnesses, self.pop_size)
+
+            if progress_callback is not None:
+                progress_callback(generation_idx + 1, generations)
 
         return pop
 

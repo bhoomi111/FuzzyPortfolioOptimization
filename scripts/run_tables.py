@@ -1,92 +1,178 @@
 from pathlib import Path
+import argparse
+from datetime import datetime
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DATA_PATH = ROOT / "data" / "raw" / "monthly_returns.csv"
-RESULTS_DIR = ROOT / "results"
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
 import pandas as pd
 
+from src.config import (
+    CP_VALUES,
+    MP_VALUES,
+    MONTHLY_RETURNS_FILE,
+    POP_SIZE,
+    RESULTS_DIR,
+    RUNS,
+    GENERATIONS,
+    TEST_MONTHS,
+)
+from src.evaluation.benchmark import load_monthly_returns, split_last_n_months
 from src.models.model1 import model1_objectives
 from src.models.model2 import model2_objectives
 from src.models.model3 import model3_objectives
 
-from scripts.run_model import run_model
 from scripts.build_table import build_table
+from scripts.run_model import run_model
+
+MODEL_SPECS = [
+    ("MODEL I RESULTS", "model1", model1_objectives),
+    ("MODEL II RESULTS", "model2", model2_objectives),
+    ("MODEL III RESULTS", "model3", model3_objectives),
+]
 
 
-# Load data
-returns = pd.read_csv(DATA_PATH)
-returns["Date"] = pd.to_datetime(returns["Date"])
-returns = returns.set_index("Date")
-returns = returns.astype(float)
-
-n_assets = returns.shape[1]
-
-cp_values = [0.6, 0.7, 0.8]
-mp_values = [0.2, 0.3, 0.4]
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate model tables and representative portfolios.")
+    parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
+    return parser.parse_args()
 
 
-# 🔥 Run models
-print("Running Model I...")
-res1 = run_model(returns, model1_objectives, cp_values, mp_values, n_assets)
-
-print("Running Model II...")
-res2 = run_model(returns, model2_objectives, cp_values, mp_values, n_assets)
-
-print("Running Model III...")
-res3 = run_model(returns, model3_objectives, cp_values, mp_values, n_assets)
+def log(message: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
 
-# 🔥 Build tables
-table1 = build_table(res1, "model1")
-table2 = build_table(res2, "model2")
-table3 = build_table(res3, "model3")
-
-
-# 🔥 Save results
-table1.to_csv(RESULTS_DIR / "model1_table.csv", index=False)
-table2.to_csv(RESULTS_DIR / "model2_table.csv", index=False)
-table3.to_csv(RESULTS_DIR / "model3_table.csv", index=False)
-
-def print_table(title, df):
+def print_table(title: str, df: pd.DataFrame) -> None:
     print("\n" + "=" * 80)
-    print(f"{title}")
+    print(title)
     print("=" * 80)
 
-    # Limit decimals for readability
-    display_df = df.copy()
+    if df.empty:
+        print("No representative solutions passed the filtration criteria.")
+        return
 
-    for col in ["b1", "b2", "b3", "k", "Mean", "Risk", "Skewness", "Semikurtosis"]:
+    display_df = df.copy()
+    metric_cols = [c for c in ["b1", "b2", "b3", "k", "Mean", "Risk", "Skewness", "Semikurtosis"] if c in display_df.columns]
+    for col in metric_cols:
         display_df[col] = display_df[col].astype(float).map(lambda x: f"{x:.5e}")
 
     print(display_df.to_string(index=False))
-print(f"\nTables saved in {RESULTS_DIR}")
 
-print_table("MODEL I RESULTS", table1)
-print_table("MODEL II RESULTS", table2)
-print_table("MODEL III RESULTS", table3)
 
-def save_portfolios(results, filename, columns):
+def save_portfolios(results: list[dict], filename: Path, columns) -> None:
     rows = []
 
-    for i, r in enumerate(results):
+    for i, result in enumerate(results):
         row = {"Rep": f"R{i+1}"}
-
-        weights = r["weights"]
-
         for j, col in enumerate(columns):
-            row[col] = weights[j]
-
+            row[col] = result["weights"][j]
         rows.append(row)
 
-    df = pd.DataFrame(rows)
-    df.to_csv(filename, index=False)
+    portfolio_columns = ["Rep", *list(columns)]
+    pd.DataFrame(rows, columns=portfolio_columns).to_csv(filename, index=False)
 
-save_portfolios(res1, RESULTS_DIR / "model1_portfolios.csv", returns.columns)
-save_portfolios(res2, RESULTS_DIR / "model2_portfolios.csv", returns.columns)
-save_portfolios(res3, RESULTS_DIR / "model3_portfolios.csv", returns.columns)
+
+def load_dataset_split(test_months: int = TEST_MONTHS):
+    returns = load_monthly_returns(MONTHLY_RETURNS_FILE)
+    train_returns, test_returns, split_note = split_last_n_months(returns, test_months=test_months)
+    return returns, train_returns, test_returns, split_note
+
+
+def run_model_suite(
+    train_returns,
+    pop_size: int = POP_SIZE,
+    generations: int = GENERATIONS,
+    runs: int = RUNS,
+    verbose: bool = True,
+):
+    n_assets = train_returns.shape[1]
+    outputs = {}
+
+    for title, slug, objective_fn in MODEL_SPECS:
+        results = run_model(
+            train_returns,
+            objective_fn,
+            CP_VALUES,
+            MP_VALUES,
+            n_assets,
+            pop_size=pop_size,
+            generations=generations,
+            runs=runs,
+            verbose=verbose,
+            detailed_logging=False,
+            model_label=title.replace(" RESULTS", ""),
+        )
+        outputs[slug] = {
+            "title": title,
+            "results": results,
+        }
+
+    return outputs
+
+
+def run_tables_pipeline(
+    pop_size: int = POP_SIZE,
+    generations: int = GENERATIONS,
+    runs: int = RUNS,
+    results_dir: Path = RESULTS_DIR,
+    model_outputs: dict | None = None,
+    show_tables: bool = False,
+    emit_setup_logs: bool = True,
+):
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    returns, train_returns, test_returns, split_note = load_dataset_split(test_months=TEST_MONTHS)
+
+    if emit_setup_logs:
+        log(
+            f"Loaded dataset with {len(returns)} monthly rows, {returns.shape[1]} assets, "
+            f"date range {returns.index.min().date()} to {returns.index.max().date()}."
+        )
+        log(split_note)
+        log(f"Using config settings | population={pop_size} | generations={generations} | runs={runs}")
+
+    outputs = model_outputs if model_outputs is not None else run_model_suite(
+        train_returns,
+        pop_size=pop_size,
+        generations=generations,
+        runs=runs,
+        verbose=True,
+    )
+
+    for title, slug, _objective_fn in MODEL_SPECS:
+        results = outputs[slug]["results"]
+        table = build_table(results, slug)
+        table_path = results_dir / f"{slug}_table.csv"
+        portfolios_path = results_dir / f"{slug}_portfolios.csv"
+        table.to_csv(table_path, index=False)
+        save_portfolios(results, portfolios_path, returns.columns)
+        outputs[slug].update(
+            {
+                "table": table,
+                "table_path": table_path,
+                "portfolios_path": portfolios_path,
+            }
+        )
+        if show_tables:
+            print_table(title, table)
+        log(f"{title.replace(' RESULTS', '')}: saved {len(table)} representatives.")
+
+    log(f"Tables saved in {results_dir}")
+    if emit_setup_logs:
+        log(f"Training rows: {len(train_returns)} | Unseen rows reserved: {len(test_returns)}")
+    return outputs
+
+
+def main() -> None:
+    args = parse_args()
+    run_tables_pipeline(
+        results_dir=args.results_dir,
+        show_tables=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

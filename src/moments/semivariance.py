@@ -13,7 +13,7 @@ def semivariance(fuzzy, e):
     c2p = 1 / ((1 + k) * (1 + 2 * k))
 
     if b1 <= e <= b2:
-        return (k / (2 * rho1**(1/k + 2))) * (1 / c2p) * alpha**(1/k)
+        return (k**2 * rho1 ** (1 / k + 2) * c2p) / (alpha ** (1 / k))
     else:
         L1 = (
             -k * alpha * rho2 * c1
@@ -22,4 +22,4 @@ def semivariance(fuzzy, e):
             + rho2 * beta * c1
             + beta**2 * c2
         )
-        return L1 - (rho3**(k + 2)) * c2 * beta**k
+        return L1 - (rho3 ** (k + 2) * c2) / (beta**k)

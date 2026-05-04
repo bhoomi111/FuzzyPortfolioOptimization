@@ -7,8 +7,28 @@ from src.moments.semikurtosis import semikurtosis
 
 import pandas as pd
 
+TABLE_COLUMNS = [
+    "Rep",
+    "Center position",
+    "cp",
+    "mp",
+    "run",
+    "Total solutions",
+    "b1",
+    "b2",
+    "b3",
+    "k",
+    "Mean",
+    "Risk",
+    "Skewness",
+    "Semikurtosis",
+]
+
 
 def build_table(results, model_type):
+    if not results:
+        return pd.DataFrame(columns=TABLE_COLUMNS)
+
     rows = []
 
     for i, r in enumerate(results):
@@ -27,8 +47,11 @@ def build_table(results, model_type):
 
         row = {
             "Rep": f"R{i+1}",
+            "Center position": r.get("center_position"),
             "cp": r["cp"],
             "mp": r["mp"],
+            "run": r.get("run", 1),
+            "Total solutions": r.get("total_pareto_solutions"),
             "b1": fuzzy.b1,
             "b2": fuzzy.b2,
             "b3": fuzzy.b3,
@@ -41,4 +64,4 @@ def build_table(results, model_type):
 
         rows.append(row)
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=TABLE_COLUMNS)

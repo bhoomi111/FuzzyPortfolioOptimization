@@ -18,4 +18,4 @@ def skewness(fuzzy, e):
     M1 = rho2**2 * c1 + 2 * beta * rho2 * c2 + 2 * beta**2 * c3
     M2 = rho2**2 * c1p - 2 * k * alpha * rho2 * c2p + 2 * k**2 * alpha**2 * c3p
 
-    return 1.5 * (beta * M1 - k * alpha * M2 + 2 * rho2**3)
+    return 1.5 * (beta * M1 - k * alpha * M2 + (2 * rho2**3) / 3)

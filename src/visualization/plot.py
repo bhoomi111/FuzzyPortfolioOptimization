@@ -1,12 +1,10 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 import pandas as pd
 
-
-# Plot output configuration.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RESULTS_DIR = PROJECT_ROOT / "results"
+from src.config import RESULTS_DIR
 
 
 def _save_and_optionally_show(fig, file_name: str, show: bool = True, results_dir: Path = RESULTS_DIR):
@@ -20,6 +18,15 @@ def _save_and_optionally_show(fig, file_name: str, show: bool = True, results_di
         plt.close(fig)
 
     return output_path
+
+
+def _risk_label(model_name: str) -> str:
+    labels = {
+        "model1": "Risk (Semivariance)",
+        "model2": "Risk (MASD)",
+        "model3": "Risk (CVaR)",
+    }
+    return labels.get(model_name.lower(), "Risk")
 
 
 # Pareto risk-return scatter.
@@ -102,7 +109,7 @@ def plot_frontier(population, objective_fn, show: bool = True, results_dir: Path
 def plot_pareto_from_table(table: pd.DataFrame, model_name: str, show: bool = False, results_dir: Path = RESULTS_DIR):
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(table["Risk"], table["Mean"], alpha=0.75)
-    ax.set_xlabel("Risk")
+    ax.set_xlabel(_risk_label(model_name))
     ax.set_ylabel("Return (Mean)")
     ax.set_title(f"Pareto Front: {model_name}")
     ax.grid(True, alpha=0.3)
@@ -114,7 +121,7 @@ def plot_pareto_from_table(table: pd.DataFrame, model_name: str, show: bool = Fa
 def plot_skewness_from_table(table: pd.DataFrame, model_name: str, show: bool = False, results_dir: Path = RESULTS_DIR):
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(table["Risk"], table["Skewness"], color="green", alpha=0.75)
-    ax.set_xlabel("Risk")
+    ax.set_xlabel(_risk_label(model_name))
     ax.set_ylabel("Skewness")
     ax.set_title(f"Risk vs Skewness: {model_name}")
     ax.grid(True, alpha=0.3)
@@ -128,7 +135,7 @@ def plot_frontier_from_table(table: pd.DataFrame, model_name: str, show: bool = 
 
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(sorted_table["Risk"], sorted_table["Mean"], marker="o")
-    ax.set_xlabel("Risk")
+    ax.set_xlabel(_risk_label(model_name))
     ax.set_ylabel("Return (Mean)")
     ax.set_title(f"Efficient Frontier (Approx): {model_name}")
     ax.grid(True, alpha=0.3)
@@ -152,24 +159,87 @@ def plot_allocations_from_table(portfolios: pd.DataFrame, model_name: str, show:
     return _save_and_optionally_show(fig, file_name, show=show, results_dir=results_dir)
 
 
+def plot_cumulative_returns_from_table(
+    returns_table: pd.DataFrame,
+    title: str,
+    file_name: str,
+    show: bool = False,
+    results_dir: Path = RESULTS_DIR,
+):
+    cumulative = (1.0 + returns_table).cumprod() - 1.0
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for column in cumulative.columns:
+        ax.plot(cumulative.index, cumulative[column], marker="o", linewidth=2, label=column)
+
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Average Cumulative Return")
+    ax.set_title(title)
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.set_xticks(list(cumulative.index))
+
+    return _save_and_optionally_show(fig, file_name, show=show, results_dir=results_dir)
+
+
+def plot_quarterly_returns_from_table(
+    returns_table: pd.DataFrame,
+    title: str,
+    file_name: str,
+    show: bool = False,
+    results_dir: Path = RESULTS_DIR,
+):
+    cumulative = (1.0 + returns_table).cumprod() - 1.0
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    columns = list(cumulative.columns)
+    x = list(cumulative.index)
+    width = 0.18 if len(columns) >= 4 else 0.22
+    offsets = [((i - (len(columns) - 1) / 2) * width) for i in range(len(columns))]
+
+    for idx, column in enumerate(columns):
+        xpos = [value + offsets[idx] for value in x]
+        ax.bar(xpos, cumulative[column], width=width, label=column)
+
+    ax.set_xlabel("Quarter")
+    ax.set_ylabel("Cumulative Quarterly Average Return")
+    ax.set_title(title)
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(v) for v in x])
+
+    return _save_and_optionally_show(fig, file_name, show=show, results_dir=results_dir)
+
+
 def generate_plots_from_results(results_dir: Path = RESULTS_DIR, show: bool = False):
     generated = []
 
     for model_name in ["model1", "model2", "model3"]:
         table_path = results_dir / f"{model_name}_table.csv"
-        if not table_path.exists():
-            continue
-
-        table = pd.read_csv(table_path)
-        generated.append(plot_pareto_from_table(table, model_name, show=show, results_dir=results_dir))
-        generated.append(plot_skewness_from_table(table, model_name, show=show, results_dir=results_dir))
-        generated.append(plot_frontier_from_table(table, model_name, show=show, results_dir=results_dir))
-
         portfolios_path = results_dir / f"{model_name}_portfolios.csv"
-        if portfolios_path.exists():
-            portfolios = pd.read_csv(portfolios_path)
-            generated.append(plot_allocations_from_table(portfolios, model_name, show=show, results_dir=results_dir))
 
+        if table_path.exists():
+            try:
+                table = pd.read_csv(table_path)
+            except pd.errors.EmptyDataError:
+                table = pd.DataFrame()
+
+            if not table.empty:
+                generated.append(plot_pareto_from_table(table, model_name, show=show, results_dir=results_dir))
+                generated.append(plot_frontier_from_table(table, model_name, show=show, results_dir=results_dir))
+                generated.append(plot_skewness_from_table(table, model_name, show=show, results_dir=results_dir))
+
+        if portfolios_path.exists():
+            try:
+                portfolios = pd.read_csv(portfolios_path)
+            except pd.errors.EmptyDataError:
+                portfolios = pd.DataFrame()
+
+            if not portfolios.empty:
+                generated.append(plot_allocations_from_table(portfolios, model_name, show=show, results_dir=results_dir))
     return generated
 
 

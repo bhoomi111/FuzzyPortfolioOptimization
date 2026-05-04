@@ -13,13 +13,3 @@ def model1_objectives(fuzzy):
         -skewness(fuzzy, e),
         semikurtosis(fuzzy, e)
     ]
-def fitness_vector(obj):
-    """
-    Convert to minimization problem
-    """
-    return [
-        -obj["mean"],       # maximize
-        obj["risk"],        # minimize
-        -obj["skewness"],   # maximize
-        obj["kurtosis"],    # minimize
-    ]
