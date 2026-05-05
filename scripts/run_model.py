@@ -43,6 +43,7 @@ def run_model(
     model_label="Model",
 ):
     all_solutions = []
+    evaluation_cache = {}
     lower = np.full(n_assets, LOWER_BOUND) if lower is None else np.asarray(lower, dtype=float)
     upper = np.full(n_assets, UPPER_BOUND) if upper is None else np.asarray(upper, dtype=float)
     total_jobs = len(cp_values) * len(mp_values) * runs
@@ -68,6 +69,10 @@ def run_model(
             weights = np.ones_like(weights) / len(weights)
 
         weights = repair(weights, lower, upper, cardinality)
+        cache_key = tuple(np.round(weights, 12))
+        cached = evaluation_cache.get(cache_key)
+        if cached is not None:
+            return cached
         R = portfolio_returns(returns, weights)
         R = R[~np.isnan(R)]
 
@@ -79,10 +84,12 @@ def run_model(
         except ValueError:
             return None
 
-        return {
+        result = {
             "weights": weights,
             "fuzzy": fuzzy,
         }
+        evaluation_cache[cache_key] = result
+        return result
 
     def objective_fn(weights):
         result = full_evaluation(weights)
@@ -123,17 +130,9 @@ def run_model(
                 fitnesses = [objective_fn(p) for p in pop]
                 fronts = non_dominated_sort(pop, fitnesses)
                 pareto_indices = fronts[0] if fronts else range(len(pop))
-                added_before = len(all_solutions)
-
                 for idx in pareto_indices:
                     eval_result = full_evaluation(pop[idx])
                     if eval_result is None:
-                        continue
-
-                    e = credibilistic_mean(eval_result["fuzzy"])
-                    s = skewness(eval_result["fuzzy"], e)
-
-                    if e < min_expected_return or s < min_skewness:
                         continue
 
                     all_solutions.append({
@@ -147,14 +146,18 @@ def run_model(
                 if detailed_logging:
                     log(
                         f"{model_label} finished job {completed_jobs}/{total_jobs}; "
-                        f"Pareto candidates kept after filters: {len(all_solutions) - added_before}"
+                        f"Pareto candidates collected from this run: {len(pareto_indices)}"
                     )
 
     progress_bar.close()
 
     if not all_solutions:
         log("No feasible representative candidates survived the filtration criteria.")
-        return []
+        return {
+            "representatives": [],
+            "global_pareto": [],
+            "filtered_pareto": [],
+        }
 
     unique_solutions = []
     seen_signatures = set()
@@ -169,14 +172,42 @@ def run_model(
     if duplicate_count and detailed_logging:
         log(f"{model_label} removed {duplicate_count} duplicate Pareto candidates before clustering.")
 
-    weights_only = np.array([x["weights"] for x in unique_solutions])
+    global_fitnesses = [objective_function(solution["fuzzy"]) for solution in unique_solutions]
+    global_fronts = non_dominated_sort(unique_solutions, global_fitnesses)
+    global_pareto = [unique_solutions[idx] for idx in (global_fronts[0] if global_fronts else range(len(unique_solutions)))]
+
+    filtered_solutions = []
+    for solution in global_pareto:
+        e = credibilistic_mean(solution["fuzzy"])
+        s = skewness(solution["fuzzy"], e)
+
+        if min_expected_return is not None and e < min_expected_return:
+            continue
+
+        if min_skewness is not None and s < min_skewness:
+            continue
+
+        filtered_solutions.append(solution)
+
+    if not filtered_solutions:
+        log("No globally non-dominated candidates survived the filtration criteria.")
+        return {
+            "representatives": [],
+            "global_pareto": global_pareto,
+            "filtered_pareto": [],
+        }
+
+    weights_only = np.array([x["weights"] for x in filtered_solutions])
     if detailed_logging:
-        log(f"{model_label} running k-medoids on {len(unique_solutions)} filtered Pareto candidates.")
-    medoids = k_medoids(weights_only, k=min(representatives, len(unique_solutions)))
-    total_pareto_solutions = len(unique_solutions)
+        log(
+            f"{model_label} global Pareto union size={len(global_pareto)}; "
+            f"filtered size={len(filtered_solutions)}. Running k-medoids."
+        )
+    medoids = k_medoids(weights_only, k=min(representatives, len(filtered_solutions)))
+    total_pareto_solutions = len(filtered_solutions)
     selected = []
     for medoid_idx in medoids:
-        representative = dict(unique_solutions[medoid_idx])
+        representative = dict(filtered_solutions[medoid_idx])
         representative["center_position"] = medoid_idx + 1
         representative["total_pareto_solutions"] = total_pareto_solutions
         selected.append(representative)
@@ -184,4 +215,8 @@ def run_model(
         f"{model_label}: {len(selected)} representatives selected "
         f"from {total_pareto_solutions} unique Pareto candidates."
     )
-    return selected
+    return {
+        "representatives": selected,
+        "global_pareto": global_pareto,
+        "filtered_pareto": filtered_solutions,
+    }

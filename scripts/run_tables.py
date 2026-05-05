@@ -62,11 +62,11 @@ def print_table(title: str, df: pd.DataFrame) -> None:
     print(display_df.to_string(index=False))
 
 
-def save_portfolios(results: list[dict], filename: Path, columns) -> None:
+def save_portfolios(results: list[dict], filename: Path, columns, label_prefix: str = "R") -> None:
     rows = []
 
     for i, result in enumerate(results):
-        row = {"Rep": f"R{i+1}"}
+        row = {"Rep": f"{label_prefix}{i+1}"}
         for j, col in enumerate(columns):
             row[col] = result["weights"][j]
         rows.append(row)
@@ -105,10 +105,7 @@ def run_model_suite(
             detailed_logging=False,
             model_label=title.replace(" RESULTS", ""),
         )
-        outputs[slug] = {
-            "title": title,
-            "results": results,
-        }
+        outputs[slug] = {"title": title, **results}
 
     return outputs
 
@@ -143,22 +140,48 @@ def run_tables_pipeline(
     )
 
     for title, slug, _objective_fn in MODEL_SPECS:
-        results = outputs[slug]["results"]
-        table = build_table(results, slug)
+        representatives = outputs[slug]["representatives"]
+        global_pareto = outputs[slug]["global_pareto"]
+        filtered_pareto = outputs[slug]["filtered_pareto"]
+
+        table = build_table(representatives, slug)
         table_path = results_dir / f"{slug}_table.csv"
         portfolios_path = results_dir / f"{slug}_portfolios.csv"
         table.to_csv(table_path, index=False)
-        save_portfolios(results, portfolios_path, returns.columns)
+        save_portfolios(representatives, portfolios_path, returns.columns, label_prefix="R")
+
+        global_table = build_table(global_pareto, slug)
+        global_table_path = results_dir / f"{slug}_global_pareto_table.csv"
+        global_portfolios_path = results_dir / f"{slug}_global_pareto_portfolios.csv"
+        global_table.to_csv(global_table_path, index=False)
+        save_portfolios(global_pareto, global_portfolios_path, returns.columns, label_prefix="G")
+
+        filtered_table = build_table(filtered_pareto, slug)
+        filtered_table_path = results_dir / f"{slug}_filtered_pareto_table.csv"
+        filtered_portfolios_path = results_dir / f"{slug}_filtered_pareto_portfolios.csv"
+        filtered_table.to_csv(filtered_table_path, index=False)
+        save_portfolios(filtered_pareto, filtered_portfolios_path, returns.columns, label_prefix="F")
+
         outputs[slug].update(
             {
                 "table": table,
                 "table_path": table_path,
                 "portfolios_path": portfolios_path,
+                "global_table": global_table,
+                "global_table_path": global_table_path,
+                "global_portfolios_path": global_portfolios_path,
+                "filtered_table": filtered_table,
+                "filtered_table_path": filtered_table_path,
+                "filtered_portfolios_path": filtered_portfolios_path,
             }
         )
         if show_tables:
             print_table(title, table)
-        log(f"{title.replace(' RESULTS', '')}: saved {len(table)} representatives.")
+        log(
+            f"{title.replace(' RESULTS', '')}: saved "
+            f"{len(global_table)} global Pareto, {len(filtered_table)} filtered Pareto, "
+            f"{len(table)} representatives."
+        )
 
     log(f"Tables saved in {results_dir}")
     if emit_setup_logs:

@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 
 
@@ -27,7 +29,13 @@ class CoherentTriangularFuzzy:
         if not b1 < b2 < b3:
             raise ValueError("fuzzy fit requires b1 < b2 < b3")
 
-        u = np.random.uniform()
+        # The paper samples a uniform variate to choose the branch used for k.
+        # We keep that step, but derive it deterministically from the return
+        # series so the same portfolio is scored consistently across evaluations.
+        rounded = np.round(R, 12)
+        digest = hashlib.blake2b(rounded.tobytes(), digest_size=8).digest()
+        seed = int.from_bytes(digest, byteorder="little", signed=False)
+        u = np.random.default_rng(seed).uniform()
 
         if u < 0.5:
             ratio = (b2 - Q[19]) / (b2 - b1)

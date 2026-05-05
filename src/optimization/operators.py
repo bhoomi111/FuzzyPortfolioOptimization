@@ -16,16 +16,17 @@ def _bounded_exponential_step(x, bound, diff, lamb, toward_lower, r):
     return -lamb * np.log(max(value, 1e-12))
 
 
-def crossover(parent1, parent2, lower=None, upper=None, lamb=0.5):
+def crossover_pair(parent1, parent2, lower=None, upper=None, lamb=0.5):
     """
     CCBEX-style bounded exponential crossover from Appendix B.1.
 
-    The original pseudocode generates two offspring; this implementation
-    samples one of them because the surrounding MOGA loop expects one child.
+    Returns both offspring described in the original pseudocode.
     """
     if lower is None or upper is None:
         alpha = np.random.rand()
-        return alpha * parent1 + (1 - alpha) * parent2
+        child1 = alpha * parent1 + (1 - alpha) * parent2
+        child2 = alpha * parent2 + (1 - alpha) * parent1
+        return child1, child2
 
     child1 = parent1.copy()
     child2 = parent2.copy()
@@ -49,8 +50,12 @@ def crossover(parent1, parent2, lower=None, upper=None, lamb=0.5):
         child1[i] = parent1[i] + step1 * diff
         child2[i] = parent2[i] + step2 * diff
 
-    child = child1 if np.random.rand() < 0.5 else child2
-    return np.clip(child, 0.0, upper)
+    return np.clip(child1, 0.0, upper), np.clip(child2, 0.0, upper)
+
+
+def crossover(parent1, parent2, lower=None, upper=None, lamb=0.5):
+    child1, child2 = crossover_pair(parent1, parent2, lower=lower, upper=upper, lamb=lamb)
+    return child1 if np.random.rand() < 0.5 else child2
 
 
 def swap_mutation(weights, lower, upper):
@@ -86,15 +91,15 @@ def power_mutation(weights, lower, upper, power_index=10):
     if span <= 0:
         return w
 
-    r = np.random.rand()
-    s = np.random.rand()
-    t = (w[i] - lower[i]) / span
-    delta = s ** power_index
+    rho = np.random.rand()
+    sigma = np.random.rand()
+    theta = (w[i] - lower[i]) / span
+    chi = rho ** (1.0 / power_index)
 
-    if r < t:
-        w[i] = w[i] - delta * (w[i] - lower[i])
+    if theta < sigma:
+        w[i] = w[i] - chi * (w[i] - lower[i])
     else:
-        w[i] = w[i] + delta * (upper[i] - w[i])
+        w[i] = w[i] + chi * (upper[i] - w[i])
 
     return w
 

@@ -59,6 +59,8 @@ This writes files like:
 - `results/model1_portfolios.csv`
 - `results/model2_portfolios.csv`
 - `results/model3_portfolios.csv`
+- `results/model1_global_pareto_table.csv`
+- `results/model1_filtered_pareto_table.csv`
 
 ### Generate plots from saved tables
 
@@ -68,9 +70,9 @@ python src/visualization/plot.py
 
 This writes files like:
 
-- `results/model1_pareto_front.png`
-- `results/model1_risk_vs_skewness.png`
-- `results/model1_efficient_frontier.png`
+- `results/model1_pareto_front.png` (global, filtered, and representative solutions overlaid)
+- `results/model1_risk_vs_skewness.png` (global, filtered, and representative solutions overlaid)
+- `results/model1_efficient_frontier.png` (global, filtered, and representative frontiers overlaid)
 - `results/model1_portfolio_allocations.png`
 - `results/model2_pareto_front.png`
 - `results/model2_risk_vs_skewness.png`
@@ -89,9 +91,6 @@ python scripts/run_benchmark.py
 
 This runs the benchmark comparison against NIFTY 50 and writes files like:
 
-- `results/model1_representative_portfolios.csv`
-- `results/model2_representative_portfolios.csv`
-- `results/model3_representative_portfolios.csv`
 - `results/model1_average_weights.csv`
 - `results/model2_average_weights.csv`
 - `results/model3_average_weights.csv`

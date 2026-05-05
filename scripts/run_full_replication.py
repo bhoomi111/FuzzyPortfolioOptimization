@@ -74,7 +74,7 @@ def main() -> None:
         benchmark_prices=None,
         benchmark_column=args.benchmark_column,
         allow_proxy=False,
-        representative_results={slug: payload["results"] for slug, payload in model_outputs.items()},
+        representative_results={slug: payload["representatives"] for slug, payload in model_outputs.items()},
         emit_setup_logs=False,
     )
 

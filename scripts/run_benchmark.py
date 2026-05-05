@@ -28,7 +28,6 @@ from src.evaluation.benchmark import (
     backtest_models,
     load_benchmark_returns,
     load_monthly_returns,
-    representative_weights_frame,
     split_last_n_months,
 )
 from src.visualization.plot import (
@@ -85,7 +84,7 @@ def run_benchmark_pipeline(
             runs=runs,
             verbose=True,
         )
-        representative_results = {slug: payload["results"] for slug, payload in computed_outputs.items()}
+        representative_results = {slug: payload["representatives"] for slug, payload in computed_outputs.items()}
 
     averaged_weights = {}
     model_monthly_returns = {}
@@ -94,9 +93,6 @@ def run_benchmark_pipeline(
 
     for title, slug, _objective_fn in MODEL_SPECS:
         results = representative_results.get(slug, [])
-
-        reps_df = representative_weights_frame(results, asset_names)
-        reps_df.to_csv(results_dir / f"{slug}_representative_portfolios.csv", index=False)
 
         avg_weights = average_weights(results, asset_names)
         avg_weights.rename("weight").to_frame().to_csv(results_dir / f"{slug}_average_weights.csv")

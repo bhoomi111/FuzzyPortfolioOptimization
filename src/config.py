@@ -15,6 +15,7 @@ LOWER_BOUND = 0.08
 UPPER_BOUND = 0.30
 
 CVAR_CONFIDENCE = 0.95
+
 MIN_EXPECTED_RETURN = 0.02
 MIN_SKEWNESS = 0.0
 
@@ -23,9 +24,9 @@ MP_VALUES = [0.2, 0.3, 0.4]
 
 # Optimization settings used by the main runners.
 # Change these values in one place and rerun the scripts.
-POP_SIZE = 100
-GENERATIONS = 500
-RUNS = 15
+POP_SIZE = 150
+GENERATIONS = 1000
+RUNS = 10
 REPRESENTATIVES = 25
 
 TEST_MONTHS = 24
