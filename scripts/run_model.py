@@ -1,5 +1,8 @@
-import numpy as np
+import hashlib
+import os
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
+import numpy as np
 from tqdm import tqdm
 
 from src.config import (
@@ -8,6 +11,8 @@ from src.config import (
     LOWER_BOUND,
     MIN_EXPECTED_RETURN,
     MIN_SKEWNESS,
+    MOMENTUM_LOOKBACK,
+    MOMENTUM_WEIGHT,
     POP_SIZE,
     REPRESENTATIVES,
     RUNS,
@@ -20,7 +25,175 @@ from src.moments.mean import credibilistic_mean
 from src.moments.skewness import skewness
 from src.optimization.constraints import repair
 from src.optimization.moga import MOGA
+from src.optimization.nsga2 import NSGAII
 from src.optimization.pareto import non_dominated_sort
+
+
+_WORKER_RETURNS = None
+_WORKER_OBJECTIVE_FUNCTION = None
+_WORKER_LOWER = None
+_WORKER_UPPER = None
+_WORKER_CARDINALITY = None
+
+
+def _init_worker(returns, objective_function, lower, upper, cardinality):
+    global _WORKER_RETURNS, _WORKER_OBJECTIVE_FUNCTION, _WORKER_LOWER, _WORKER_UPPER, _WORKER_CARDINALITY
+    _WORKER_RETURNS = returns
+    _WORKER_OBJECTIVE_FUNCTION = objective_function
+    _WORKER_LOWER = lower
+    _WORKER_UPPER = upper
+    _WORKER_CARDINALITY = cardinality
+
+
+def _job_seed(model_label: str, cp: float, mp: float, run: int) -> int:
+    payload = f"{model_label}|{cp:.12g}|{mp:.12g}|{run}".encode("utf-8")
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="little", signed=False) % (2**32)
+
+
+def _run_single_job(job_payload):
+    (
+        n_assets,
+        pop_size,
+        generations,
+        cp,
+        mp,
+        run,
+        model_label,
+        momentum_weight,
+        momentum_lookback,
+        fuzzy_fit_method,
+        fuzzy_window,
+        fuzzy_quantiles,
+        fuzzy_min_periods,
+        optimizer,
+        crossover_mode,
+    ) = job_payload
+
+    returns = _WORKER_RETURNS
+    objective_function = _WORKER_OBJECTIVE_FUNCTION
+    lower = _WORKER_LOWER
+    upper = _WORKER_UPPER
+    cardinality = _WORKER_CARDINALITY
+
+    job_seed = _job_seed(model_label, cp, mp, run)
+    np.random.seed(job_seed)
+
+    evaluation_cache = {}
+    objective_cache = {}
+
+    def full_evaluation(weights):
+        if np.sum(weights) == 0:
+            weights = np.ones_like(weights) / len(weights)
+
+        weights = repair(weights, lower, upper, cardinality)
+        cache_key = tuple(np.round(weights, 12))
+        cached = evaluation_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        R = portfolio_returns(returns, weights)
+        R = R[~np.isnan(R)]
+
+        if len(R) < 10:
+            return None
+
+        try:
+            fuzzy = CoherentTriangularFuzzy.fit_from_returns(
+                R,
+                method=fuzzy_fit_method,
+                window=fuzzy_window,
+                quantiles=fuzzy_quantiles,
+                min_periods=fuzzy_min_periods,
+            )
+        except ValueError:
+            return None
+
+        recent_momentum = 0.0
+        if momentum_weight and momentum_lookback > 0:
+            recent_window = R[-momentum_lookback:]
+            if len(recent_window) > 0:
+                recent_momentum = float(np.mean(recent_window))
+
+        result = {
+            "weights": weights,
+            "fuzzy": fuzzy,
+            "recent_momentum": recent_momentum,
+        }
+        evaluation_cache[cache_key] = result
+        return result
+
+    def objective_fn(weights):
+        result = full_evaluation(weights)
+
+        if result is None:
+            return [1e6, 1e6, 1e6, 1e6]
+
+        cache_key = tuple(np.round(result["weights"], 12))
+        cached = objective_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        objectives = list(objective_function(result["fuzzy"]))
+        if any(not np.isfinite(value) for value in objectives):
+            return [1e6, 1e6, 1e6, 1e6]
+        if momentum_weight:
+            objectives[0] -= momentum_weight * result.get("recent_momentum", 0.0)
+        objective_cache[cache_key] = objectives
+        return objectives
+
+    optimizer_name = (optimizer or "moga").lower()
+    if optimizer_name == "nsga2":
+        solver = NSGAII(
+            pop_size=pop_size,
+            n_assets=n_assets,
+            lower=lower,
+            upper=upper,
+            k=cardinality,
+            cp=cp,
+            mp=mp,
+            crossover_mode=crossover_mode,
+            random_state=job_seed,
+        )
+    else:
+        solver = MOGA(
+            pop_size=pop_size,
+            n_assets=n_assets,
+            lower=lower,
+            upper=upper,
+            k=cardinality,
+            cp=cp,
+            mp=mp,
+        )
+
+    pop = solver.run(objective_fn, generations=generations)
+    fitnesses = [objective_fn(p) for p in pop]
+    fronts = non_dominated_sort(pop, fitnesses)
+    pareto_indices = fronts[0] if fronts else range(len(pop))
+
+    all_solutions = []
+    for idx in pareto_indices:
+        eval_result = full_evaluation(pop[idx])
+        if eval_result is None:
+            continue
+
+        all_solutions.append(
+            {
+                "weights": eval_result["weights"],
+                "cp": cp,
+                "mp": mp,
+                "run": run + 1,
+                "fuzzy": eval_result["fuzzy"],
+            }
+        )
+
+    return {
+        "cp": cp,
+        "mp": mp,
+        "run": run,
+        "solutions": all_solutions,
+        "pareto_count": len(pareto_indices),
+    }
 
 
 def run_model(
@@ -41,13 +214,45 @@ def run_model(
     verbose=True,
     detailed_logging=False,
     model_label="Model",
+    parallel_jobs=True,
+    max_workers=None,
+    momentum_weight: float = MOMENTUM_WEIGHT,
+    momentum_lookback: int = MOMENTUM_LOOKBACK,
+    fuzzy_fit_method: str = "static",
+    fuzzy_window: int = 30,
+    fuzzy_quantiles: tuple[float, float, float] = (0.1, 0.5, 0.9),
+    fuzzy_min_periods: int | None = None,
+    optimizer: str = "moga",
+    crossover_mode: str = "sbx",
 ):
     all_solutions = []
-    evaluation_cache = {}
     lower = np.full(n_assets, LOWER_BOUND) if lower is None else np.asarray(lower, dtype=float)
     upper = np.full(n_assets, UPPER_BOUND) if upper is None else np.asarray(upper, dtype=float)
-    total_jobs = len(cp_values) * len(mp_values) * runs
-    completed_jobs = 0
+
+    job_payloads = [
+        (
+            n_assets,
+            pop_size,
+            generations,
+            cp,
+            mp,
+            run,
+            model_label,
+            momentum_weight,
+            momentum_lookback,
+            fuzzy_fit_method,
+            fuzzy_window,
+            fuzzy_quantiles,
+            fuzzy_min_periods,
+            optimizer,
+            crossover_mode,
+        )
+        for cp in cp_values
+        for mp in mp_values
+        for run in range(runs)
+    ]
+    total_jobs = len(job_payloads)
+
     def log(message):
         if verbose:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -64,90 +269,50 @@ def run_model(
         )
         return rounded_weights + rounded_fuzzy
 
-    def full_evaluation(weights):
-        if np.sum(weights) == 0:
-            weights = np.ones_like(weights) / len(weights)
-
-        weights = repair(weights, lower, upper, cardinality)
-        cache_key = tuple(np.round(weights, 12))
-        cached = evaluation_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        R = portfolio_returns(returns, weights)
-        R = R[~np.isnan(R)]
-
-        if len(R) < 10:
-            return None
-
-        try:
-            fuzzy = CoherentTriangularFuzzy.fit_from_returns(R)
-        except ValueError:
-            return None
-
-        result = {
-            "weights": weights,
-            "fuzzy": fuzzy,
-        }
-        evaluation_cache[cache_key] = result
-        return result
-
-    def objective_fn(weights):
-        result = full_evaluation(weights)
-
-        if result is None:
-            return [1e6, 1e6, 1e6, 1e6]
-
-        return objective_function(result["fuzzy"])
-
     progress_bar = tqdm(
-        total=total_jobs * generations,
+        total=total_jobs,
         desc=model_label,
-        unit="gen",
+        unit="job",
         disable=not verbose,
         leave=True,
-        dynamic_ncols=True,
     )
 
-    for cp in cp_values:
-        for mp in mp_values:
-            for run in range(runs):
-                completed_jobs += 1
-                moga = MOGA(
-                    pop_size=pop_size,
-                    n_assets=n_assets,
-                    lower=lower,
-                    upper=upper,
-                    k=cardinality,
-                    cp=cp,
-                    mp=mp,
+    if parallel_jobs and total_jobs > 1:
+        worker_count = max_workers if max_workers is not None else (os.cpu_count() or 1)
+        worker_count = max(1, min(worker_count, total_jobs))
+
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            initializer=_init_worker,
+            initargs=(returns, objective_function, lower, upper, cardinality),
+        ) as executor:
+            for job_result in executor.map(_run_single_job, job_payloads, chunksize=1):
+                all_solutions.extend(job_result["solutions"])
+                progress_bar.set_postfix_str(
+                    f"job={job_result['run'] + 1}/{runs} cp={job_result['cp']:.1f} mp={job_result['mp']:.1f}"
                 )
-
-                def on_generation(generation_done, generation_total):
-                    progress_bar.set_postfix_str(f"job={completed_jobs}/{total_jobs} cp={cp:.1f} mp={mp:.1f} run={run + 1}/{runs}")
-                    progress_bar.update(1)
-
-                pop = moga.run(objective_fn, generations=generations, progress_callback=on_generation)
-                fitnesses = [objective_fn(p) for p in pop]
-                fronts = non_dominated_sort(pop, fitnesses)
-                pareto_indices = fronts[0] if fronts else range(len(pop))
-                for idx in pareto_indices:
-                    eval_result = full_evaluation(pop[idx])
-                    if eval_result is None:
-                        continue
-
-                    all_solutions.append({
-                        "weights": eval_result["weights"],
-                        "cp": cp,
-                        "mp": mp,
-                        "run": run + 1,
-                        "fuzzy": eval_result["fuzzy"],
-                    })
+                progress_bar.update(1)
 
                 if detailed_logging:
                     log(
-                        f"{model_label} finished job {completed_jobs}/{total_jobs}; "
-                        f"Pareto candidates collected from this run: {len(pareto_indices)}"
+                        f"{model_label} finished job cp={job_result['cp']:.1f} mp={job_result['mp']:.1f} run={job_result['run'] + 1}/{runs}; "
+                        f"Pareto candidates collected from this run: {job_result['pareto_count']}"
                     )
+    else:
+        _init_worker(returns, objective_function, lower, upper, cardinality)
+        for job_payload in job_payloads:
+            job_result = _run_single_job(job_payload)
+            all_solutions.extend(job_result["solutions"])
+            progress_bar.set_postfix_str(
+                f"job={job_result['run'] + 1}/{runs} cp={job_result['cp']:.1f} mp={job_result['mp']:.1f}"
+            )
+            progress_bar.update(1)
+
+            if detailed_logging:
+                log(
+                    f"{model_label} finished job cp={job_result['cp']:.1f} mp={job_result['mp']:.1f} run={job_result['run'] + 1}/{runs}; "
+                    f"Pareto candidates collected from this run: {job_result['pareto_count']}"
+                )
 
     progress_bar.close()
 

@@ -11,6 +11,11 @@ import pandas as pd
 
 from src.config import (
     CP_VALUES,
+    FUZZY_FIT_METHOD,
+    FUZZY_QUANTILES,
+    FUZZY_ROLLING_WINDOW,
+    MOMENTUM_LOOKBACK,
+    MOMENTUM_WEIGHT,
     MP_VALUES,
     MONTHLY_RETURNS_FILE,
     POP_SIZE,
@@ -37,6 +42,12 @@ MODEL_SPECS = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate model tables and representative portfolios.")
     parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
+    parser.add_argument("--optimizer", type=str, default="moga", choices=["moga", "nsga2"])
+    parser.add_argument("--fuzzy-fit-method", type=str, default=FUZZY_FIT_METHOD, choices=["static", "rolling"])
+    parser.add_argument("--rolling-window", type=int, default=FUZZY_ROLLING_WINDOW)
+    parser.add_argument("--fuzzy-quantiles", type=str, default=",".join(map(str, FUZZY_QUANTILES)))
+    parser.add_argument("--fuzzy-min-periods", type=int, default=None)
+    parser.add_argument("--crossover-mode", type=str, default="sbx", choices=["sbx", "convex"])
     return parser.parse_args()
 
 
@@ -87,6 +98,14 @@ def run_model_suite(
     generations: int = GENERATIONS,
     runs: int = RUNS,
     verbose: bool = True,
+    momentum_weight: float = MOMENTUM_WEIGHT,
+    momentum_lookback: int = MOMENTUM_LOOKBACK,
+    fuzzy_fit_method: str = FUZZY_FIT_METHOD,
+    fuzzy_window: int = FUZZY_ROLLING_WINDOW,
+    fuzzy_quantiles: tuple[float, float, float] = FUZZY_QUANTILES,
+    fuzzy_min_periods: int | None = None,
+    optimizer: str = "moga",
+    crossover_mode: str = "sbx",
 ):
     n_assets = train_returns.shape[1]
     outputs = {}
@@ -104,6 +123,14 @@ def run_model_suite(
             verbose=verbose,
             detailed_logging=False,
             model_label=title.replace(" RESULTS", ""),
+            momentum_weight=momentum_weight,
+            momentum_lookback=momentum_lookback,
+            fuzzy_fit_method=fuzzy_fit_method,
+            fuzzy_window=fuzzy_window,
+            fuzzy_quantiles=fuzzy_quantiles,
+            fuzzy_min_periods=fuzzy_min_periods,
+            optimizer=optimizer,
+            crossover_mode=crossover_mode,
         )
         outputs[slug] = {"title": title, **results}
 
@@ -118,6 +145,12 @@ def run_tables_pipeline(
     model_outputs: dict | None = None,
     show_tables: bool = False,
     emit_setup_logs: bool = True,
+    fuzzy_fit_method: str = FUZZY_FIT_METHOD,
+    fuzzy_window: int = FUZZY_ROLLING_WINDOW,
+    fuzzy_quantiles: tuple[float, float, float] = FUZZY_QUANTILES,
+    fuzzy_min_periods: int | None = None,
+    optimizer: str = "moga",
+    crossover_mode: str = "sbx",
 ):
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,6 +170,12 @@ def run_tables_pipeline(
         generations=generations,
         runs=runs,
         verbose=True,
+        fuzzy_fit_method=fuzzy_fit_method,
+        fuzzy_window=fuzzy_window,
+        fuzzy_quantiles=fuzzy_quantiles,
+        fuzzy_min_periods=fuzzy_min_periods,
+        optimizer=optimizer,
+        crossover_mode=crossover_mode,
     )
 
     for title, slug, _objective_fn in MODEL_SPECS:
@@ -191,9 +230,16 @@ def run_tables_pipeline(
 
 def main() -> None:
     args = parse_args()
+    quantiles = tuple(float(x) for x in args.fuzzy_quantiles.split(","))
     run_tables_pipeline(
         results_dir=args.results_dir,
         show_tables=False,
+        optimizer=args.optimizer,
+        fuzzy_fit_method=args.fuzzy_fit_method,
+        fuzzy_window=args.rolling_window,
+        fuzzy_quantiles=quantiles,
+        fuzzy_min_periods=args.fuzzy_min_periods,
+        crossover_mode=args.crossover_mode,
     )
 
 

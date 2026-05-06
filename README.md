@@ -6,6 +6,7 @@ Python implementation of a fuzzy portfolio optimization workflow using coherent 
 
 - Loads monthly returns data from CSV
 - Builds coherent triangular fuzzy numbers from portfolio returns
+- Supports a rolling quantile fuzzy fit for data-driven triangular fuzzy numbers
 - Evaluates multiple fuzzy-moment objectives:
   - Mean
   - Semivariance
@@ -117,6 +118,70 @@ This writes files into:
 
 - `results_full_replication/tables_and_model_plots`
 - `results_full_replication/benchmark_vs_nifty50`
+
+### Optimizer and fuzzy mode via CLI
+
+You can now choose the optimizer and fuzzy fit mode from command line runners.
+
+Tables run:
+
+```bash
+python scripts/run_tables.py --optimizer nsga2 --fuzzy-fit-method static
+```
+
+Benchmark run:
+
+```bash
+python scripts/run_benchmark.py --optimizer nsga2 --fuzzy-fit-method rolling --rolling-window 30
+```
+
+Supported options:
+
+- `--optimizer moga|nsga2`
+- `--fuzzy-fit-method static|rolling`
+- `--rolling-window <int>`
+- `--fuzzy-quantiles q1,q2,q3`
+- `--fuzzy-min-periods <int>`
+- `--crossover-mode sbx|convex`
+
+### Compare baseline and rolling-quantile fuzzy fits
+
+The full replication script can now run both the original static fuzzy fit and the new rolling quantile fit, then save comparison plots without NIFTY 50.
+
+```bash
+python scripts/run_full_replication.py --rolling-window 30
+```
+
+This writes separate outputs for:
+
+- `results_full_replication/baseline_static`
+- `results_full_replication/modified_rolling`
+- `results_full_replication/comparison_plots`
+
+The comparison plots include cumulative return lines for Model I, Model II, and Model III before and after the fuzzy-number change, without the benchmark series.
+
+### Compare baseline MOGA vs NSGA-II (without rolling)
+
+Use this to keep fuzzy mode static in both runs and compare only optimizer changes.
+
+```bash
+python scripts/run_full_replication.py \
+  --baseline-name baseline_static_moga \
+  --baseline-optimizer moga \
+  --baseline-fuzzy-fit-method static \
+  --modified-name modified_nsga2_static \
+  --modified-optimizer nsga2 \
+  --modified-fuzzy-fit-method static \
+  --comparison-dir comparison_plots_nsga2
+```
+
+This writes separate outputs for:
+
+- `results_full_replication/baseline_static_moga`
+- `results_full_replication/modified_nsga2_static`
+- `results_full_replication/comparison_plots_nsga2`
+
+You can also combine NSGA-II with rolling mode by setting `--modified-fuzzy-fit-method rolling --rolling-window 30`.
 
 ## Data Format
 

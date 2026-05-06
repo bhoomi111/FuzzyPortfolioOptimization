@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.config import ROLLING_TEST_YEARS
+
 
 def load_monthly_returns(csv_path: Path) -> pd.DataFrame:
     returns = pd.read_csv(csv_path)
@@ -32,6 +34,50 @@ def split_last_n_months(
         f"({test_returns.index.min().date()} to {test_returns.index.max().date()})."
     )
     return train_returns, test_returns, split_note
+
+
+def split_by_calendar_year(
+    returns: pd.DataFrame,
+    test_year: int,
+    train_start_year: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+    if returns.empty:
+        raise ValueError("Cannot split an empty returns frame.")
+
+    start_year = train_start_year or int(returns.index.min().year)
+    train_start = f"{start_year}-01-01"
+    train_end = f"{test_year - 1}-12-31"
+    test_start = f"{test_year}-01-01"
+    test_end = f"{test_year}-12-31"
+
+    train_returns = returns.loc[train_start:train_end].copy()
+    test_returns = returns.loc[test_start:test_end].copy()
+
+    if train_returns.empty:
+        raise ValueError(
+            f"No training data available before test year {test_year}. "
+            f"Requested train window {train_start} to {train_end}."
+        )
+
+    if test_returns.empty:
+        raise ValueError(f"No test data available for calendar year {test_year}.")
+
+    split_note = (
+        f"Calendar-year split used: training on {train_returns.index.min().date()} to {train_returns.index.max().date()} "
+        f"and testing on {test_returns.index.min().date()} to {test_returns.index.max().date()}."
+    )
+    return train_returns, test_returns, split_note
+
+
+def rolling_year_splits(
+    returns: pd.DataFrame,
+    test_years: tuple[int, ...] = ROLLING_TEST_YEARS,
+) -> list[tuple[int, pd.DataFrame, pd.DataFrame, str]]:
+    splits = []
+    for test_year in test_years:
+        train_returns, test_returns, split_note = split_by_calendar_year(returns, test_year)
+        splits.append((test_year, train_returns, test_returns, split_note))
+    return splits
 
 
 def representative_weights_frame(results: list[dict], asset_names: list[str]) -> pd.DataFrame:
